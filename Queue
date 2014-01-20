@@ -1,0 +1,83 @@
+Public NextItem As New Queue
+Public Value As Variant
+Public head As Queue
+Public tail As Queue
+Public countQ As Long
+
+' Returns a Boolean value indicating whether a Queue has items.
+Public Property Get IsEmpty() As Boolean
+    IsEmpty = ((head Is Nothing) And (tail Is Nothing))
+End Property
+
+' Gets the number of elements contained in the Queue.
+Public Property Get Count() As Long
+    Count = countQ
+End Property
+
+' Returns the object at the beginning of the Queue without removing it.
+Public Property Get Peek() As Variant
+    Peek = head.Value
+End Property
+
+' Adds an object to the end of the Queue.
+Public Function Enqueue(v As Variant)
+    Dim Queue As New Queue
+    Queue.Value = v 'patient #
+    If Me.IsEmpty = True Then
+        Set head = Queue 'head of queue becomes new queue item
+        Set tail = head 'tail of queue is the head since there's only 1 item in the queue
+    Else
+        Set tail.NextItem = Queue
+        Set tail = Queue
+    End If
+    countQ = countQ + 1
+    Set Queue = Nothing
+End Function
+
+' Removes and returns the object at the beginning of the Queue.
+Public Function Dequeue() As Variant
+    If Me.IsEmpty = True Then
+        Dequeue = Null
+    Else
+        Dequeue = head.Value
+        
+        If head Is tail Then
+            Set head = Nothing
+            Set tail = Nothing
+            countQ = 0
+        Else
+            Set head = head.NextItem
+            countQ = countQ - 1
+        End If
+    End If
+End Function
+
+' Removes all objects from the Queue.
+Public Function Clear()
+    countQ = 0
+    Set head = Nothing
+    Set tail = Nothing
+End Function
+
+' Copies the Queue elements to a new array.
+Public Function ToArray() As Variant
+    Dim sizeQ As Long
+    Dim result() As Variant
+    Dim index As Long
+    Dim tmp As Queue
+    
+    sizeQ = Me.Count - 1
+
+    If sizeQ > -1 Then
+        ReDim result(sizeQ)
+        Set tmp = head
+        For index = 0 To sizeQ
+            result(index) = tmp.Value
+            Set tmp = tmp.NextItem
+        Next index
+        ToArray = result
+    Else
+        Erase result
+    End If
+    Set tmp = Nothing
+End Function
