@@ -1,0 +1,308 @@
+Option Explicit
+Dim SimulationClock As Double 'simulation clock
+Public NumberInSys As Integer, TNUtilization As Double, RegUtilization As Double
+Dim patientArrivalRate As Double, TriageW As Double, TriageS As Double, RegW As Double, RegS As Double
+Dim i As Integer
+Dim TriageQueue As Integer, TriageServiceRate As Integer, RServiceRate As Integer
+Public RunTime As Double
+Public Patient() As Variant
+Public Nurse(1 To 3, 1 To 4) As Variant
+Dim RC(1 To 2, 1 To 4) As Variant 'Registration Clerk
+Public Arrival() As Long
+Dim ws As Worksheet
+Dim Q As New Queue
+Dim RQ As New RegQueue
+
+Sub GenerateArrival() 'Generate arrival times
+    Dim PNum As Long
+    Set ws = ActiveWorkbook.Worksheets("Prototype")
+    PNum = ws.Range("F3").Value * ws.Range("C14").Value * 1.3
+    ReDim Patient(1 To PNum, 0 To 13)
+    patientArrivalRate = 60 / ws.Range("C14").Value
+    Randomize 5
+    For i = 0 To PNum
+        ReDim Preserve Arrival(i + 1)
+            If i = 0 Then
+                Arrival(i) = Int(Log(1 - Rnd()) / (-1 / patientArrivalRate))
+            Else
+                Arrival(i) = Arrival(i - 1) + Int(Log(1 - Rnd()) / (-1 / patientArrivalRate)) 'Cumulative arrival times
+                If Arrival(i) = Arrival(i - 1) Then
+                    Arrival(i) = Arrival(i) + 1
+                End If
+            End If
+    Next i
+End Sub
+
+Sub Simulation()
+    Call GenerateArrival
+    SimulationClock = 0
+    NumberInSys = 0
+    TriageW = 0
+    TriageServiceRate = 60 / ws.Range("B4").Value
+    RServiceRate = 60 / ws.Range("B18").Value
+    For j = 1 To 3
+        Nurse(j, 2) = False
+    Next j
+    'Nurse(1, 2) = False
+    RC(1, 2) = False
+    RunTime = ws.Range("F3").Value * 60 '24 hrs in minutes
+    Do While (SimulationClock < RunTime)
+        If (SimulationClock = Arrival(NumberInSys)) Then
+            NumberInSys = NumberInSys + 1   'Track total number of patient in the system
+            Call patientArrival(SimulationClock, NumberInSys)
+        End If
+        '
+        'Logic for Triage queue
+        '
+        
+        For k = 1 To 3
+            If (Nurse(k, 2) = True And SimulationClock = Nurse(k, 3)) Then
+                Nurse(k, 2) = False
+                Nurse(k, 3) = 0
+                If (Q.IsEmpty = False) Then 'Check to see if there are patients in the queue
+                    Nurse(k, 3) = Patient(Q.head.Value, 3)
+                    Q.Dequeue
+                    Nurse(k, 2) = True
+                End If
+            End If
+        Next k
+        
+        
+        'If (Nurse(1, 2) = True And SimulationClock = Nurse(1, 3)) Then  'Time for when nurse completes service
+        '    Nurse(1, 2) = False
+        '    Nurse(1, 3) = 0
+        '    If (Q.IsEmpty = False) Then 'Check to see if there are patients in the queue
+        '        Nurse(1, 3) = Patient(Q.head.Value, 3)
+        '        Q.Dequeue
+        '        Nurse(1, 2) = True
+        '    End If
+        'End If
+        '
+        'Check if patient is triaged
+        'Call triageCheck(Patient(PatientNo, 7))
+        'If (SimulationClock = Patient(
+        For i = 1 To NumberInSys
+            If (Patient(i, 7) = SimulationClock) Then
+                Call RArrival(SimulationClock, i)
+            End If
+        Next i
+        SimulationClock = SimulationClock + 1
+    Loop
+    Call CalculateUtil("Triage") 'Calculate triage nurse utilization
+    Call AvgTraigeWaitTime 'Caluclate average triage wait time
+    Call AvgRWaitTime
+    Call AvgRServiceTime
+    Call AvgTriageServiceTime
+    Call GenerateOutput
+    Call CalculateUtil("Registration")
+    Call OutputPatientData(Patient, ActiveWorkbook.Worksheets("PatientData").[a2])
+    ActiveWorkbook.RefreshAll
+End Sub
+
+Sub RArrival(ArrivalTime As Double, PatientNo As Integer)
+    Randomize
+        If RC(1, 2) = True Then 'Enter Queue since nurse is busy
+            RQ.Enqueue (PatientNo)
+            If (Patient(PatientNo - 1, 9) < Patient(PatientNo, 7)) Then
+                 Patient(PatientNo, 8) = Patient(PatientNo, 7) 'Service begins right away
+            Else
+                Patient(PatientNo, 8) = Patient(PatientNo - 1, 9) 'Service begins when previous patient completes service
+            End If
+            Patient(PatientNo, 11) = Int(Log(1 - Rnd()) / (-1 / RServiceRate)) 'Duration of service
+            If Patient(PatientNo, 11) = 0 Then 'Service time must be > 0
+                Patient(PatientNo, 11) = Patient(PatientNo, 11) + 1 'Service time is 1 min
+            End If
+            Patient(PatientNo, 10) = Patient(PatientNo, 8) - Patient(PatientNo, 7)   'Calculate wait time
+            Patient(PatientNo, 9) = Patient(PatientNo, 8) + Patient(PatientNo, 11) 'Service finish time
+        ElseIf (RC(1, 2) = False) Then 'Don't enter Queue
+            Patient(PatientNo, 10) = 0 '0 wait time in queue
+            Patient(PatientNo, 11) = Int(Log(1 - Rnd()) / (-1 / RServiceRate)) 'Duration of service
+            If Patient(PatientNo, 11) = 0 Then   'Service time must be > 0
+                Patient(PatientNo, 11) = Patient(PatientNo, 11) + 1
+            End If
+            Patient(PatientNo, 8) = Patient(PatientNo, 7) 'Serviced when they arrive
+            Patient(PatientNo, 9) = Patient(PatientNo, 8) + Patient(PatientNo, 11) 'Service finish time
+            RC(1, 3) = SimulationClock + Patient(PatientNo, 11) 'Time registration clerk is busy until
+            RC(1, 2) = True
+        End If
+End Sub
+
+Sub patientArrival(ArrivalTime As Double, PatientNo As Integer)
+        Randomize
+        Patient(PatientNo, 0) = PatientNo
+        Patient(PatientNo, 1) = ArrivalTime
+        Patient(PatientNo, 6) = assignCTAS
+        
+        For i = 1 To 3
+            If Nurse(i, 2) = True Then
+                Q.Enqueue (PatientNo)
+        
+        Next i
+                
+        If Nurse(1, 2) = True Then 'Enter Queue since nurse is busy
+            Q.Enqueue (PatientNo)
+            If (Patient(PatientNo - 1, 3) < Patient(PatientNo, 1)) Then
+                 Patient(PatientNo, 2) = Patient(PatientNo, 1) 'Service begins right away
+            Else
+                Patient(PatientNo, 2) = Patient(PatientNo - 1, 3) 'Service begins when previous patient completes service
+            End If
+            Patient(PatientNo, 5) = Int(Log(1 - Rnd()) / (-1 / TriageServiceRate)) 'Duration of service
+            If Patient(PatientNo, 5) = 0 Then 'Service time must be > 0
+                Patient(PatientNo, 5) = Patient(PatientNo, 5) + 1 'Service time is 1 min
+            End If
+            Patient(PatientNo, 4) = Patient(PatientNo, 2) - Patient(PatientNo, 1)   'Calculate wait time
+            Patient(PatientNo, 3) = Patient(PatientNo, 2) + Patient(PatientNo, 5) 'Service finish time
+        ElseIf (Nurse(1, 2) = False) Then 'Don't enter Queue
+            Patient(PatientNo, 4) = 0 '0 wait time in queue
+            Patient(PatientNo, 5) = Int(Log(1 - Rnd()) / (-1 / TriageServiceRate)) 'Duration of service
+            If Patient(PatientNo, 5) = 0 Then   'Service time must be > 0
+                Patient(PatientNo, 5) = Patient(PatientNo, 5) + 1
+            End If
+            Patient(PatientNo, 2) = Patient(PatientNo, 1) 'Serviced when they arrive
+            Patient(PatientNo, 3) = Patient(PatientNo, 2) + Patient(PatientNo, 5) 'Service finish time
+            Nurse(1, 3) = SimulationClock + Patient(PatientNo, 5) 'Time nurse is busy until
+            Nurse(1, 2) = True
+        End If
+        Patient(PatientNo, 7) = Patient(PatientNo, 3) + ws.Range("B23").Value 'Adds the time to travel from triage to registration
+End Sub
+                
+Function CalculateUtil(Process As String) As Double
+    Dim TotalService
+    TNUtilization = 0
+    TotalService = 0
+    If (Process = "Triage") Then
+        If (Patient(NumberInSys, 3) > RunTime) Then
+            For i = 1 To NumberInSys
+                TotalService = (TotalService + Patient(i, 5))
+            Next i
+            TNUtilization = TotalService / Patient(NumberInSys, 3)
+        Else
+            For i = 1 To NumberInSys
+                TotalService = (TotalService + Patient(i, 5))
+            Next i
+            TNUtilization = TotalService / RunTime
+        End If
+    Else
+        If (Patient(NumberInSys, 9) > RunTime) Then
+            For i = 1 To NumberInSys
+                TotalService = (TotalService + Patient(i, 11))
+            Next i
+            RegUtilization = TotalService / Patient(NumberInSys, 9)
+        Else
+            For i = 1 To NumberInSys
+                TotalService = (TotalService + Patient(i, 11))
+            Next i
+            RegUtilization = TotalService / RunTime
+        End If
+    End If
+End Function
+
+Function AvgTraigeWaitTime() As Double 'Calculate total wait time for triage
+    For i = 1 To NumberInSys
+        TriageW = TriageW + Patient(i, 4)
+    Next i
+    TriageW = TriageW / NumberInSys
+End Function
+
+Function AvgTriageServiceTime() As Double 'Calculate average service time for triage
+    For i = 1 To NumberInSys
+        TriageS = TriageS + Patient(i, 5)
+    Next i
+    TriageS = TriageS / NumberInSys
+End Function
+
+Function AvgRWaitTime() As Double 'Calculate average wait time for registration
+    For i = 1 To NumberInSys
+        RegW = RegW + Patient(i, 10)
+    Next i
+    RegW = RegW / NumberInSys
+End Function
+
+Function AvgRServiceTime() As Double 'Calculate average service time for registration
+    For i = 1 To NumberInSys
+        RegS = RegS + Patient(i, 11)
+    Next i
+    RegS = RegS / NumberInSys
+End Function
+
+Public Function assignCTAS() As Integer
+    Dim c1, c2, c2u, c3, c3u, c4, c4u, c5 As Double
+    Dim test(101, 1) As Integer
+    Set ws = ActiveWorkbook.Worksheets("Prototype")
+    Dim RandomNumber As Integer
+    RandomNumber = (100 - 1 + 1) * Rnd + 1 'Generate random number
+    c1 = ws.Range("B7").Value * 100
+    c2 = ws.Range("B8").Value * 100
+    c3 = ws.Range("B9").Value * 100
+    c4 = ws.Range("B10").Value * 100
+    c5 = ws.Range("B11").Value * 100
+    c2u = c1 + c2
+    c3u = c3 + c2u
+    c4u = c4 + c3u
+    If (RandomNumber <= c1) Then 'If random number falls between range, assign CTAS level
+        assignCTAS = 1
+    ElseIf (RandomNumber >= (c1 + 1) And RandomNumber <= c2u) Then
+        assignCTAS = 2
+    ElseIf (RandomNumber >= (c2u + 1) And RandomNumber <= c3u) Then
+        assignCTAS = 3
+    ElseIf (RandomNumber >= (c3u + 1) And RandomNumber <= c4u) Then
+        assignCTAS = 4
+    ElseIf (RandomNumber > c4u) Then
+        assignCTAS = 5
+    End If
+End Function
+
+Sub GenerateOutput()
+    Worksheets("Prototype").Activate
+    With Worksheets("Prototype")
+        .Range("J5").Value = TNUtilization
+        .Range("J6").Value = NumberInSys
+        .Range("J7").Value = TriageW
+        .Range("J8").Value = TriageS
+        .Range("J11").Value = RegUtilization
+        .Range("J12").Value = RegW
+        .Range("J13").Value = RegS
+    End With
+End Sub
+
+Sub OutputPatientData(Data As Variant, Cl As Range)
+    Cl.Resize(UBound(Data, 1), UBound(Data, 2) + 1) = Data
+End Sub
+
+Sub Clear()
+    With Worksheets("Prototype")
+        .Range("J5").Value = 0
+        .Range("J6").Value = 0
+        .Range("J7").Value = 0
+        .Range("J8").Value = 0
+        .Range("J11").Value = 0
+        .Range("J12").Value = 0
+        .Range("J13").Value = 0
+    End With
+    Call ClearPatientData
+    ActiveWorkbook.RefreshAll
+    Sheets("Prototype").Select
+End Sub
+
+Sub ClearPatientData()
+    Sheets("PatientData").Select
+    With Worksheets("PatientData")
+        Rows("2:" & Rows.Count).ClearContents
+    End With
+End Sub
+
+Sub GenerateGraph()
+    Sheets("PatientData").Select
+    Columns("G:G").Select
+    Sheets("Sheet6").Select
+    Cells(3, 1).Select
+    With ActiveSheet.PivotTables("PivotTable6").PivotFields("CTAS Level")
+        .Orientation = xlRowField
+        .Position = 1
+    End With
+    ActiveSheet.PivotTables("PivotTable6").AddDataField ActiveSheet.PivotTables( _
+        "PivotTable6").PivotFields("CTAS Level"), "Count of CTAS Level", xlCount
+    With ActiveSheet.PivotTables("PivotTable6").PivotFields("CTAS Level")
+        .PivotItems("(blank)").Visible = False
+    End With
+End Sub
